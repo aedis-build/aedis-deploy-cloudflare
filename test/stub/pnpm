@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Fake `pnpm exec wrangler` for test/action.py: logs every call, answers `deployments status` from $STUB_STATUS
+# (empty: no deployment yet) and writes the entries Wrangler writes to WRANGLER_OUTPUT_FILE_PATH.
+set -euo pipefail
+[ "$1 $2" = "exec wrangler" ] || { echo "stub pnpm: only 'pnpm exec wrangler' is expected, got: $*" >&2; exit 1; }
+shift 2
+echo "wrangler $* (cwd $(basename "$PWD"))" >> "$STUB_LOG"
+args=" $* "
+if [[ "$args" == *" --secrets-file /dev/stdin "* ]]; then
+  python3 -c "import json,sys; print('secrets ' + ','.join(sorted(json.load(sys.stdin))))" >> "$STUB_LOG"
+fi
+case "$1 ${2:-}" in
+  "deployments status")
+    if [ -n "${STUB_STATUS:-}" ]; then cat "$STUB_STATUS"; else echo "The Worker site has no deployments." >&2; exit 1; fi ;;
+  "versions upload")
+    echo '{"type":"version-upload","version":1,"version_id":"99999999-9999-4999-8999-999999999999","preview_url":"https://99999999-site.acme.workers.dev","preview_alias_url":'"$([[ "$args" == *" --preview-alias "* ]] && echo '"https://pr-7-site-preview.acme.workers.dev"' || echo null)"'}' >> "$WRANGLER_OUTPUT_FILE_PATH" ;;
+  "versions deploy"|"triggers deploy") ;;
+  deploy*)
+    if [[ "$args" == *" --dry-run "* ]]; then
+      dir="$(sed -E 's/.* --outdir ([^ ]+) .*/\1/' <<< "$args")"; mkdir -p "$dir"; echo 'export default {}' > "$dir/worker.js"
+    else
+      echo '{"type":"deploy","version":1,"version_id":"88888888-8888-4888-8888-888888888888","targets":["www.example.com"]}' >> "$WRANGLER_OUTPUT_FILE_PATH"
+    fi ;;
+  *) echo "stub pnpm: unexpected wrangler $*" >&2; exit 1 ;;
+esac

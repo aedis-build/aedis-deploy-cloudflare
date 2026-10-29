@@ -1,0 +1,9 @@
+# TOML is read too; the production environment forgot preview_urls.
+name = "site"
+main = ".open-next/worker.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[env.prd]
+routes = [{ pattern = "www.example.com", custom_domain = true }]

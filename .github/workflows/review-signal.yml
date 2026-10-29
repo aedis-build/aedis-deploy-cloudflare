@@ -1,0 +1,18 @@
+# Review signal: when someone approves a pull request this workflow only finishes, with no permission and without
+# touching the code. gate.yml listens for its completion (workflow_run, always the version on main) and re-evaluates
+# the pull request with the human approval. A pull_request_review run uses the pull request's definition, so it never
+# approves anything by itself.
+name: review-signal
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions: {}
+
+jobs:
+  signal:
+    if: github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "approval submitted"

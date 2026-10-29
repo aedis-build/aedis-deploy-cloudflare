@@ -1,0 +1,237 @@
+# Publishes a site the caller's job already built and verified to Cloudflare Workers. Two modes: `static` (assets
+# only, `wrangler deploy`) and `worker` (server code such as Next.js through OpenNext: `wrangler versions upload`,
+# then `wrangler versions deploy` with an optional traffic percentage and `wrangler triggers deploy`, or only the
+# upload with a preview alias). Before anything is uploaded it checks the API token (fails when invalid, warns when
+# it expires in under 14 days), lints the Wrangler configuration of the target environment and, in worker mode,
+# measures the bundle. Runtime secrets go to Wrangler on stdin, attached to the uploaded version.
+#
+# Wrangler comes from the caller's lockfile (`pnpm exec wrangler`, after `pnpm install --frozen-lockfile`), never
+# from a global install. Build, attestation and its verification belong to the caller: this action only publishes
+# the bytes it finds in `artifact-dir`.
+name: Aedis Deploy Cloudflare
+description: Deploy a verified static site or Worker to Cloudflare with token check, config lint, size budget, previews and rollout.
+author: Aedis
+branding:
+  icon: upload-cloud
+  color: orange
+inputs:
+  mode:
+    description: "static (assets only, wrangler deploy) or worker (versions upload/deploy)"
+    required: true
+  artifact-dir:
+    description: Folder with the Wrangler configuration and the built output it points to (bytes the caller already verified); Wrangler runs from here
+    default: "."
+  environment-name:
+    description: Wrangler environment (env.<name> of the configuration); empty uses the top level
+    default: ""
+  account-id:
+    description: Cloudflare account id (CLOUDFLARE_ACCOUNT_ID)
+    required: true
+  api-token:
+    description: Cloudflare API token (CLOUDFLARE_API_TOKEN); never logged
+    required: true
+  secret-names:
+    description: Runtime secrets the Worker needs, comma- or newline-separated; every one must be in secrets-json (worker mode)
+    default: ""
+  secrets-json:
+    description: JSON object of secret name to value, read only for secret-names; never echoed, each value masked
+    default: "{}"
+  percentage:
+    description: Share of traffic for the new version, 1 to 100; below 100 the previous version keeps the rest (worker mode)
+    default: "100"
+  preview-alias:
+    description: Upload a version with this alias (e.g. pr-42) and do not deploy it; empty is a normal deploy (worker mode)
+    default: ""
+  rollback-to:
+    description: Version id to send 100 % of the traffic to, without uploading anything; the caller checks its attestation first
+    default: ""
+  require-custom-domain:
+    description: Fail unless a route has custom_domain true (ignored for previews)
+    default: "true"
+  allow-workers-dev:
+    description: Accept workers_dev true
+    default: "false"
+  max-gzip-mib:
+    description: Budget of the gzipped Worker bundle in MiB (worker mode); Cloudflare itself only caps the uncompressed size at 64 MiB
+    default: "10"
+outputs:
+  version-id:
+    description: Worker version now serving (or uploaded, for a preview)
+    value: ${{ steps.result.outputs.version-id }}
+  previous-version-id:
+    description: Version that served all traffic before this deploy (empty on the first deploy), for a rollback
+    value: ${{ steps.publish.outputs.previous-version-id }}
+  url:
+    description: Public URL, https://<first custom domain>, or the first target Wrangler reports
+    value: ${{ steps.result.outputs.url }}
+  preview-url:
+    description: Version URL of the preview alias
+    value: ${{ steps.result.outputs.preview-url }}
+runs:
+  using: composite
+  steps:
+    - name: Inputs
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        PCT: ${{ inputs.percentage }}
+        ALIAS: ${{ inputs.preview-alias }}
+        ROLLBACK: ${{ inputs.rollback-to }}
+        NAMES: ${{ inputs.secret-names }}
+        DIR: ${{ inputs.artifact-dir }}
+      run: |
+        set -euo pipefail
+        fail() { echo "::error::$1"; exit 1; }
+        case "$MODE" in static|worker) ;; *) fail "mode must be static or worker" ;; esac
+        [[ "$PCT" =~ ^[0-9]+$ ]] && [ "$PCT" -ge 1 ] && [ "$PCT" -le 100 ] || fail "percentage must be an integer from 1 to 100"
+        [ -z "$ALIAS" ] || [[ "$ALIAS" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || fail "preview-alias must be lowercase letters, digits and hyphens (e.g. pr-42)"
+        [ -z "$ROLLBACK" ] || [[ "$ROLLBACK" =~ ^[0-9a-f-]{36}$ ]] || fail "rollback-to must be a Worker version id (UUID)"
+        [ -z "$ALIAS" ] || [ -z "$ROLLBACK" ] || fail "preview-alias and rollback-to are exclusive"
+        if [ "$MODE" = static ]; then
+          [ "$PCT" = 100 ] && [ -z "$ALIAS" ] || fail "percentage and preview-alias need mode worker: a static site has no versions to split"
+          [ -z "$NAMES" ] || fail "secret-names needs mode worker: a static site has no runtime to read them"
+        fi
+        [ -d "$DIR" ] || fail "artifact-dir $DIR does not exist"
+    # account-owned tokens answer on /accounts/<id>/tokens/verify, user tokens on /user/tokens/verify. The token
+    # reaches curl through a config on stdin, never as an argument.
+    - name: Verify the API token
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        TOKEN: ${{ inputs.api-token }}
+        ACCOUNT: ${{ inputs.account-id }}
+      run: |
+        set -euo pipefail
+        [ -n "$TOKEN" ] && [ -n "$ACCOUNT" ] || { echo "::error::api-token and account-id are required (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID)"; exit 1; }
+        dir="$RUNNER_TEMP/aedis-deploy-cloudflare"; rm -rf "$dir"; mkdir -p "$dir"
+        for url in "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/tokens/verify" "https://api.cloudflare.com/client/v4/user/tokens/verify"; do
+          n=$((${n:-0} + 1))
+          printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" | curl -sS --max-time 30 -K - -o "$dir/verify-$n.json" "$url" || : > "$dir/verify-$n.json"
+        done
+        python3 "$ACTION_PATH/scripts/cloudflare.py" token --response "$dir/verify-1.json" --response "$dir/verify-2.json"
+    - name: Lint the Wrangler configuration
+      id: lint
+      if: inputs.rollback-to == ''
+      shell: bash
+      working-directory: ${{ inputs.artifact-dir }}
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        MODE: ${{ inputs.mode }}
+        ENV_NAME: ${{ inputs.environment-name }}
+        ALIAS: ${{ inputs.preview-alias }}
+        CUSTOM: ${{ inputs.require-custom-domain }}
+        WDEV: ${{ inputs.allow-workers-dev }}
+      run: |
+        set -euo pipefail
+        args=(lint --mode "$MODE" --env "$ENV_NAME" --require-custom-domain "$CUSTOM" --allow-workers-dev "$WDEV" --output "$GITHUB_OUTPUT")
+        [ -z "$ALIAS" ] || args+=(--preview)
+        python3 "$ACTION_PATH/scripts/cloudflare.py" "${args[@]}"
+    - name: Runtime secrets
+      if: inputs.secret-names != '' && inputs.rollback-to == ''
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        NAMES: ${{ inputs.secret-names }}
+        SECRETS_JSON: ${{ inputs.secrets-json }}
+      run: python3 "$ACTION_PATH/scripts/cloudflare.py" secrets --names "$NAMES" --mask
+    # The dry run bundles without credentials; the bundle never leaves $RUNNER_TEMP.
+    - name: Bundle size
+      if: inputs.mode == 'worker' && inputs.rollback-to == ''
+      shell: bash
+      working-directory: ${{ inputs.artifact-dir }}
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        ENV_NAME: ${{ inputs.environment-name }}
+        MAX: ${{ inputs.max-gzip-mib }}
+        WRANGLER_SEND_METRICS: "false"
+      run: |
+        set -euo pipefail
+        out="$RUNNER_TEMP/aedis-deploy-cloudflare/bundle"; rm -rf "$out"
+        env_args=(); [ -z "$ENV_NAME" ] || env_args=(--env "$ENV_NAME")
+        pnpm exec wrangler deploy --dry-run --outdir "$out" "${env_args[@]}" > "$RUNNER_TEMP/aedis-deploy-cloudflare/dry-run.log" 2>&1 \
+          || { cat "$RUNNER_TEMP/aedis-deploy-cloudflare/dry-run.log"; echo "::error::wrangler deploy --dry-run failed"; exit 1; }
+        python3 "$ACTION_PATH/scripts/cloudflare.py" size --dir "$out" --max-gzip-mib "$MAX"
+    - name: Publish
+      id: publish
+      shell: bash
+      working-directory: ${{ inputs.artifact-dir }}
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        MODE: ${{ inputs.mode }}
+        ENV_NAME: ${{ inputs.environment-name }}
+        ALIAS: ${{ inputs.preview-alias }}
+        ROLLBACK: ${{ inputs.rollback-to }}
+        PCT: ${{ inputs.percentage }}
+        NAMES: ${{ inputs.secret-names }}
+        SECRETS_JSON: ${{ inputs.secrets-json }}
+        CLOUDFLARE_API_TOKEN: ${{ inputs.api-token }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ inputs.account-id }}
+        WRANGLER_SEND_METRICS: "false"
+        WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/aedis-deploy-cloudflare/wrangler-output.ndjson
+      run: |
+        set -euo pipefail
+        tmp="$RUNNER_TEMP/aedis-deploy-cloudflare"; : > "$WRANGLER_OUTPUT_FILE_PATH"
+        cf() { python3 "$ACTION_PATH/scripts/cloudflare.py" "$@"; }
+        env_args=(); [ -z "$ENV_NAME" ] || env_args=(--env "$ENV_NAME")
+        message="${GITHUB_REPOSITORY}@${GITHUB_SHA::12} run ${GITHUB_RUN_ID}"
+        # Secrets ride on the version they belong to (--secrets-file read from stdin), so a rollback brings back the
+        # secrets that version ran with and a split deployment keeps each version's own.
+        with_secrets() { if [ -n "$NAMES" ]; then cf secrets --names "$NAMES" | pnpm exec wrangler "$@" --secrets-file /dev/stdin; else pnpm exec wrangler "$@"; fi; }
+
+        if pnpm exec wrangler deployments status --json "${env_args[@]}" > "$tmp/status.json" 2> "$tmp/status.err"; then
+          prev="$(cf previous --status "$tmp/status.json")"
+        elif grep -qiE 'no deployments|does not exist|not found|10007' "$tmp/status.json" "$tmp/status.err"; then
+          prev=""
+        else
+          cat "$tmp/status.err"; echo "::error::wrangler deployments status failed"; exit 1
+        fi
+        echo "previous-version-id=$prev" >> "$GITHUB_OUTPUT"
+
+        if [ -n "$ROLLBACK" ]; then
+          pnpm exec wrangler versions deploy "$ROLLBACK@100%" -y --message "rollback: $message" "${env_args[@]}"
+          echo "version-id=$ROLLBACK" >> "$tmp/override"
+        elif [ "$MODE" = static ]; then
+          pnpm exec wrangler deploy --message "$message" "${env_args[@]}"
+        elif [ -z "$prev" ]; then
+          # First deploy: creates the Worker, its routes and its Durable Object classes at once.
+          [ "$PCT" = 100 ] || echo "::warning::first deploy of this Worker: percentage $PCT ignored, there is no previous version to keep traffic"
+          with_secrets deploy --message "$message" "${env_args[@]}"
+          [ -z "$ALIAS" ] || pnpm exec wrangler versions upload --preview-alias "$ALIAS" --message "$message" "${env_args[@]}"
+        elif [ -n "$ALIAS" ]; then
+          with_secrets versions upload --preview-alias "$ALIAS" --message "$message" "${env_args[@]}"
+        else
+          with_secrets versions upload --message "$message" "${env_args[@]}"
+          new="$(cf result --file "$WRANGLER_OUTPUT_FILE_PATH" | sed -n 's/^version-id=//p')"
+          [ -n "$new" ] || { echo "::error::wrangler versions upload reported no version id"; exit 1; }
+          specs=("$new@$PCT%"); [ "$PCT" = 100 ] || specs+=("$prev@$((100 - PCT))%")
+          pnpm exec wrangler versions deploy "${specs[@]}" -y --message "$message" "${env_args[@]}"
+          # versions deploy never touches routes, custom domains or the workers.dev/preview settings.
+          pnpm exec wrangler triggers deploy "${env_args[@]}"
+        fi
+    - name: Outputs and summary
+      id: result
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        MODE: ${{ inputs.mode }}
+        ALIAS: ${{ inputs.preview-alias }}
+        ROLLBACK: ${{ inputs.rollback-to }}
+        PCT: ${{ inputs.percentage }}
+        LINT_URL: ${{ steps.lint.outputs.url }}
+        PREV: ${{ steps.publish.outputs.previous-version-id }}
+      run: |
+        set -euo pipefail
+        tmp="$RUNNER_TEMP/aedis-deploy-cloudflare"
+        python3 "$ACTION_PATH/scripts/cloudflare.py" result --file "$tmp/wrangler-output.ndjson" > "$tmp/result"
+        [ ! -f "$tmp/override" ] || cat "$tmp/override" >> "$tmp/result"
+        get() { grep "^$1=" "$tmp/result" | tail -1 | cut -d= -f2-; }
+        version="$(get version-id)"; preview="$(get preview-url)"; targets="$(get targets)"
+        url=""; [ -n "$ALIAS" ] || url="${LINT_URL:-${targets%% *}}"
+        { echo "version-id=$version"; echo "preview-url=$preview"; echo "url=$url"; } >> "$GITHUB_OUTPUT"
+        {
+          echo "### Cloudflare deploy ($MODE)"; echo
+          if [ -n "$ROLLBACK" ]; then echo "- rollback: version \`$ROLLBACK\` at 100 %"
+          elif [ -n "$ALIAS" ]; then echo "- preview \`$ALIAS\`: version \`$version\`, $preview (not deployed)"
+          else echo "- version \`$version\` at ${PCT} %${PREV:+, previous \`$PREV\`}${url:+, $url}"; fi
+          echo
+        } >> "$GITHUB_STEP_SUMMARY"

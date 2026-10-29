@@ -1,0 +1,1 @@
+{"type":"deploy","version":1,"worker_name":"docs","worker_tag":"abc","version_id":"44444444-4444-4444-8444-444444444444","targets":["docs.example.com"],"timestamp":"2026-10-29T12:00:05.000Z"}
