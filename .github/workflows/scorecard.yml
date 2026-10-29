@@ -13,7 +13,7 @@ permissions: {}
 
 jobs:
   scorecard:
-    uses: aedis-build/aedis-platform/.github/workflows/scorecard.yml@255a90d04956caf7436320b50f104aaf80502e64 # v1.2.4
+    uses: aedis-build/aedis-platform/.github/workflows/scorecard.yml@af2f2aca355c38bac8e2d6da12e756f9d81033ae # v1.3.3
     permissions:
       contents: read
       security-events: write
