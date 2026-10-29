@@ -20,13 +20,13 @@ permissions: {}
 jobs:
   commits:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
-    uses: aedis-build/aedis-platform/.github/workflows/conventional-commits.yml@56b0580e0c6b2304d48e594fff6e2c0436d47958 # v1.2.4
+    uses: aedis-build/aedis-platform/.github/workflows/conventional-commits.yml@255a90d04956caf7436320b50f104aaf80502e64 # v1.2.4
     permissions:
       contents: read
 
   sast:
     if: github.event.action != 'closed'
-    uses: aedis-build/aedis-platform/.github/workflows/sast.yml@56b0580e0c6b2304d48e594fff6e2c0436d47958 # v1.2.4
+    uses: aedis-build/aedis-platform/.github/workflows/sast.yml@255a90d04956caf7436320b50f104aaf80502e64 # v1.2.4
     permissions:
       contents: read
       security-events: write
