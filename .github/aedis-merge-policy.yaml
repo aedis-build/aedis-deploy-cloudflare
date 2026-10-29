@@ -1,0 +1,23 @@
+# Merge gate policy (aedis-build/aedis-platform merge-gate.yml). Always read from the default branch; anything not
+# listed here needs a human.
+schema: aedis.platform/merge-policy/v1
+# Bots in quotes: the brackets of "[bot]" break the YAML list.
+trustedAuthors: [jeffersonnlucas, "aedis-agent-coder[bot]"]
+# Only members of this team count as the human review the paths below require (read by the gate App).
+maintainersTeam: maintainers
+humanRequiredPaths:
+  - ".github/**"
+  - CODEOWNERS
+  - SECURITY.md
+  - LICENSE
+  - "LICENSES/**"
+  - REUSE.toml
+  # The action itself: what every caller runs.
+  - action.yml
+  # Handles the Cloudflare token and the runtime secrets.
+  - "scripts/**"
+requiredSummaries: [sast-summary]
+coverageNoRegression: false
+maxChangedLines: 2000
+allowBreaking: false
+mergeMethod: squash

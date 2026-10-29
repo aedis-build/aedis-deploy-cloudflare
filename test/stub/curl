@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Fake curl for test/action.py: answers tokens/verify from $STUB_TOKEN (a fixture) and records that the token came
+# on stdin (-K -), never as an argument.
+set -euo pipefail
+out=""; url=""
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; -K) shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac; done
+cfg="$(cat)"
+case "$cfg" in *"Authorization: Bearer "*) ;; *) echo "stub curl: no token on stdin" >&2; exit 1 ;; esac
+echo "curl $url" >> "$STUB_LOG"
+cp "$STUB_TOKEN" "$out"

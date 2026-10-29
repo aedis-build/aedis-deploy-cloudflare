@@ -1,0 +1,9 @@
+// Static assets only (the shape of aedis-ui and aedis.build).
+{
+  "name": "docs",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./out", "not_found_handling": "404-page" },
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "docs.example.com", "custom_domain": true }]
+}

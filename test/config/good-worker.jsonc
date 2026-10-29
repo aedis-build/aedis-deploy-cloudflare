@@ -1,0 +1,16 @@
+// OpenNext Worker on its own domain: what the lint accepts in mode worker.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "site",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "www.example.com", "custom_domain": true }],
+  "env": {
+    // Previews: a separate Worker (site-preview) whose Version URLs are on, with no route and no production secret.
+    "preview": { "preview_urls": true, "routes": [] },
+  },
+}

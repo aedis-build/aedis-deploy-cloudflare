@@ -1,0 +1,9 @@
+// Everything the lint refuses in mode worker: workers.dev on, Version URLs left to the default, a zone route instead
+// of a custom domain, no nodejs_compat.
+{
+  "name": "site",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "routes": [{ "pattern": "www.example.com/*", "zone_name": "example.com" }]
+}

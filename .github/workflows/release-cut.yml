@@ -1,0 +1,50 @@
+# Release of this action. On every push to main the next version comes from the Conventional Commits since the last
+# tag (Aedis Platform release-cut.yml: breaking → major, feat → minor, fix/perf/refactor/revert/deps → patch, anything
+# else → no release) and the tag vX.Y.Z goes straight on the commit: the version of an action only exists in its tag,
+# which is what callers pin (`@<sha> # vX.Y.Z`) and what Dependabot follows. On top of the tag, release-tag.yml
+# publishes the immutable, attested GitHub Release with generated notes, moves the major tag `v1` and keeps the
+# CHANGELOG pull request. The first tag comes from a manual run with an explicit bump:
+#   gh workflow run release-cut -R aedis-build/aedis-deploy-cloudflare -f bump=major
+# Tag, release and pull request are made by the Aedis code App (AEDIS_CODER_APP_* organization secrets); without
+# them the cut job warns and ends green. Tick "Publish this Action to the GitHub Marketplace" on the release page.
+name: release-cut
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Increment (auto = from the commits since the last tag; patch/minor/major also cut the first release)"
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+
+permissions: {}
+
+concurrency:
+  group: release-cut
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    uses: aedis-build/aedis-platform/.github/workflows/release-cut.yml@255a90d04956caf7436320b50f104aaf80502e64 # v1.2.4
+    permissions:
+      contents: read
+    with:
+      bump: ${{ inputs.bump || 'auto' }}
+    secrets:
+      app-id: ${{ secrets.AEDIS_CODER_APP_ID }}
+      app-private-key: ${{ secrets.AEDIS_CODER_APP_PRIVATE_KEY }}
+
+  publish:
+    needs: cut
+    if: needs.cut.outputs.tag != ''
+    uses: aedis-build/aedis-platform/.github/workflows/release-tag.yml@255a90d04956caf7436320b50f104aaf80502e64 # v1.2.4
+    permissions:
+      contents: read
+    with:
+      tag: ${{ needs.cut.outputs.tag }}
+    secrets:
+      app-id: ${{ secrets.AEDIS_CODER_APP_ID }}
+      app-private-key: ${{ secrets.AEDIS_CODER_APP_PRIVATE_KEY }}

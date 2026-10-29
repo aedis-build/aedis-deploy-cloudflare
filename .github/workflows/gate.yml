@@ -1,0 +1,26 @@
+# Merge gate: after every aedis-ci run on a pull request, and after every human approval (review-signal),
+# evaluates .github/aedis-merge-policy.yaml and, when everything passes, approves as the "Aedis Compliance" GitHub
+# App and enables auto-merge. Runs from main (workflow_run) and never checks out the pull request's code.
+name: gate
+
+on:
+  workflow_run:
+    workflows: [aedis-ci, review-signal]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  gate:
+    if: contains(fromJSON('["pull_request", "pull_request_review"]'), github.event.workflow_run.event)
+    uses: aedis-build/aedis-platform/.github/workflows/merge-gate.yml@255a90d04956caf7436320b50f104aaf80502e64 # v1.2.4
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      actions: read
+    with:
+      head-sha: ${{ github.event.workflow_run.head_sha }}
+    secrets:
+      app-id: ${{ secrets.AEDIS_APP_ID }}
+      app-private-key: ${{ secrets.AEDIS_APP_PRIVATE_KEY }}

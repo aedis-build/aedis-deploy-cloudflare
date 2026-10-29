@@ -1,0 +1,2 @@
+{"type":"wrangler-session","version":1,"wrangler_version":"4.149.0","command_line_args":["versions","upload"],"timestamp":"2026-10-29T12:00:00.000Z"}
+{"type":"version-upload","version":1,"worker_name":"site-preview","worker_tag":"abc","version_id":"33333333-3333-4333-8333-333333333333","preview_url":"https://3333abcd-site-preview.acme.workers.dev","preview_alias_url":"https://pr-42-site-preview.acme.workers.dev","wrangler_environment":"preview","timestamp":"2026-10-29T12:00:05.000Z"}
