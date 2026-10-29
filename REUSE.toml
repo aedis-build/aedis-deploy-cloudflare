@@ -1,0 +1,11 @@
+version = 1
+SPDX-PackageName = "aedis-deploy-cloudflare"
+SPDX-PackageSupplier = "Aedis <security@aedis.build>"
+SPDX-PackageDownloadLocation = "https://github.com/aedis-build/aedis-deploy-cloudflare"
+
+# Every file in the repository is Apache-2.0 and copyright Aedis; the central annotation avoids a header per file.
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Aedis"
+SPDX-License-Identifier = "Apache-2.0"
