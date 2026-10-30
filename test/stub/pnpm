@@ -16,6 +16,8 @@ case "$1 ${2:-}" in
     echo '{"type":"version-upload","version":1,"version_id":"99999999-9999-4999-8999-999999999999","preview_url":"https://99999999-site.acme.workers.dev","preview_alias_url":'"$([[ "$args" == *" --preview-alias "* ]] && echo '"https://pr-7-site-preview.acme.workers.dev"' || echo null)"'}' >> "$WRANGLER_OUTPUT_FILE_PATH" ;;
   "versions deploy"|"triggers deploy") ;;
   deploy*)
+    # The real Wrangler hands deploy in an OpenNext project to opennextjs-cloudflare unless OPEN_NEXT_DEPLOY is set.
+    [ "${OPEN_NEXT_DEPLOY:-}" = true ] || { echo "stub pnpm: wrangler deploy without OPEN_NEXT_DEPLOY=true" >&2; exit 1; }
     if [[ "$args" == *" --dry-run "* ]]; then
       dir="$(sed -E 's/.* --outdir ([^ ]+) .*/\1/' <<< "$args")"; mkdir -p "$dir"; echo 'export default {}' > "$dir/worker.js"
     else
