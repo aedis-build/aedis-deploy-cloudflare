@@ -144,6 +144,9 @@ runs:
         ENV_NAME: ${{ inputs.environment-name }}
         MAX: ${{ inputs.max-gzip-mib }}
         WRANGLER_SEND_METRICS: "false"
+        # Without it, Wrangler hands `deploy` in an OpenNext project to `opennextjs-cloudflare deploy`, which rebuilds
+        # the argument list unquoted (--message breaks) and is not the verified bundle this action publishes.
+        OPEN_NEXT_DEPLOY: "true"
       run: |
         set -euo pipefail
         out="$RUNNER_TEMP/aedis-deploy-cloudflare/bundle"; rm -rf "$out"
@@ -167,6 +170,7 @@ runs:
         CLOUDFLARE_API_TOKEN: ${{ inputs.api-token }}
         CLOUDFLARE_ACCOUNT_ID: ${{ inputs.account-id }}
         WRANGLER_SEND_METRICS: "false"
+        OPEN_NEXT_DEPLOY: "true"
         WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/aedis-deploy-cloudflare/wrangler-output.ndjson
       run: |
         set -euo pipefail
